@@ -30,7 +30,25 @@ DEMO_PASSWORD=<contraseña-temporal-larga>
 
 Railway provee `PORT`; no hace falta fijarlo manualmente.
 
-## 4. Probar la demo
+## 4. Habilitar registro por invitación
+
+El registro de propietarios está cerrado por defecto: no alcanza con conocer la URL. Para crear un alta inicial desde un entorno con acceso a la base, ejecutá:
+
+```bash
+npm run auth:invite-owner -- --email dueno@example.com --organization "Mi Flota" --expires-hours 48
+```
+
+El comando imprime el token una sola vez. Compartilo por un canal privado y no lo pegues en logs, tickets o capturas públicas. El registro consume la invitación de forma atómica; después de aceptarla no puede reutilizarse.
+
+Todavía no hay envío automático de emails. Si un token se filtra, cancelalo desde PostgreSQL:
+
+```sql
+UPDATE owner_invitations
+SET status = 'cancelled'
+WHERE token_hash = '<hash-del-token>' AND status = 'pending';
+```
+
+## 5. Probar la demo
 
 Después del deploy, abrí el dominio generado por Railway y entrá con `DEMO_EMAIL` y `DEMO_PASSWORD`. La cuenta demo carga tres vehículos, aplicaciones Uber y movimientos iniciales.
 
