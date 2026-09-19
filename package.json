@@ -12,6 +12,7 @@
     "start:api": "tsx api/server.ts",
     "start:demo": "npm run db:migrate && npm run db:seed && npm run start:api",
     "test:api:deployment": "tsx api/deployment.smoke.ts",
+    "test:api:owner-invitation": "tsx api/owner-invitation.integration.ts",
     "test:api": "tsx api/smoke.ts",
     "db:migrate": "tsx api/db/migrate.ts",
     "db:seed": "tsx api/db/seed.ts",
@@ -43,3 +44,5 @@
     "vite": "^8.3.0"
   }
 }
+
+
