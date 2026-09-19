@@ -199,9 +199,7 @@ function App() {
         {authMode === 'register' && registerError && <p className="auth-error" role="alert">{registerError}</p>}
         {authMode === 'invite' && inviteError && <p className="auth-error" role="alert">{inviteError}</p>}
         <button className="primary-button auth-submit" type="submit">{authMode === 'login' ? 'Ingresar' : authMode === 'register' ? 'Crear cuenta' : 'Activar cuenta'}</button>
-        <button className="auth-switch" type="button" onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setLoginError(''); setRegisterError(''); setInviteError('') }}>
-          {authMode === 'login' ? '¿Todavía no tenés cuenta? Crear una' : 'Ya tengo una cuenta · Ingresar'}
-        </button>
+        {authMode !== 'login' && <button className="auth-switch" type="button" onClick={() => { setAuthMode('login'); setLoginError(''); setRegisterError(''); setInviteError('') }}>Ya tengo una cuenta · Ingresar</button>}
         {authMode === 'login' && <button className="auth-switch" type="button" onClick={() => { setAuthMode('invite'); setInviteError('') }}>Tengo un token de invitación</button>}
       </form>
     </main>
