@@ -28,6 +28,13 @@ try {
     body: JSON.stringify({ email: credentials.email, password: 'x'.repeat(120_000) }),
   })
   assert.equal(oversized.status, 413)
+  assert.equal(oversized.headers.get('cache-control'), 'no-store')
+
+  const malformed = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{',
+  })
+  assert.equal(malformed.status, 400)
+  assert.equal(malformed.headers.get('cache-control'), 'no-store')
 
   const invalidLogin = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -93,6 +100,12 @@ try {
   assert.equal(rateLimited.status, 429)
   assert.equal(rateLimited.headers.get('retry-after'), '900')
 
+  const forwardedAttempt = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.10' },
+    body: JSON.stringify({ email: credentials.email, password: 'wrong-password' }),
+  })
+  assert.equal(forwardedAttempt.status, 401)
+
   const logout = await fetch(`${baseUrl}/api/auth/logout`, { method: 'POST', headers: { cookie: refreshedCookie } })
   assert.equal(logout.status, 200)
   assert.equal(logout.headers.get('cache-control'), 'no-store')
@@ -105,4 +118,3 @@ try {
   await getPool().query('DELETE FROM sessions WHERE expires_at <= now()')
   await closePool()
 }
-

@@ -253,6 +253,7 @@ function settlementInput(body: unknown) {
 
 const AUTH_RATE_LIMIT = 10
 const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000
+const AUTH_RATE_MAX_KEYS = 10_000
 
 function noStore(response: express.Response) {
   response.setHeader('Cache-Control', 'no-store')
@@ -263,8 +264,15 @@ function createAuthRateLimiter() {
   return (request: express.Request, response: express.Response, next: express.NextFunction) => {
     const key = request.ip || request.socket.remoteAddress || 'unknown'
     const now = Date.now()
+    for (const [entryKey, entry] of attempts) {
+      if (entry.resetAt <= now) attempts.delete(entryKey)
+    }
     const current = attempts.get(key)
     if (!current || current.resetAt <= now) {
+      if (!current && attempts.size >= AUTH_RATE_MAX_KEYS) {
+        const oldestKey = attempts.keys().next().value
+        if (oldestKey) attempts.delete(oldestKey)
+      }
       attempts.set(key, { count: 1, resetAt: now + AUTH_RATE_WINDOW_MS })
       next()
       return
@@ -281,6 +289,7 @@ function createAuthRateLimiter() {
 }
 export function createApp() {
   const app = express()
+  app.set('trust proxy', 1)
   const authRateLimit = createAuthRateLimiter()
   app.use(express.json({ limit: '100kb' }))
 
@@ -348,7 +357,7 @@ export function createApp() {
       const existingUser = await client.query('SELECT 1 FROM users WHERE email = $1', [input.email])
       if (existingUser.rowCount) {
         await client.query('ROLLBACK')
-        response.status(409).json({ error: 'An account with this email already exists' })
+        response.status(403).json({ error: 'A valid invitation is required' })
         return
       }
 
@@ -381,7 +390,16 @@ export function createApp() {
       )
       const user = userResult.rows[0]
       await client.query('INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, $3)', [user.id, tenant.id, 'owner'])
-      await client.query("UPDATE owner_invitations SET status = 'accepted', accepted_at = now() WHERE id = $1 AND status = 'pending'", [invitationRow.id])
+      const acceptedInvitation = await client.query(
+        "UPDATE owner_invitations SET status = 'accepted', accepted_at = now() WHERE id = $1 AND status = 'pending' RETURNING id",
+        [invitationRow.id],
+      )
+      if (acceptedInvitation.rowCount !== 1) {
+        await client.query('ROLLBACK')
+        clearSessionCookie(response)
+        response.status(403).json({ error: 'A valid invitation is required' })
+        return
+      }
       await createSession(user.id, response, client)
       await client.query('COMMIT')
       response.status(201).json({ user, memberships: [{ tenantId: tenant.slug, tenantName: tenant.name, role: 'owner' }] })
@@ -389,7 +407,7 @@ export function createApp() {
       await client.query('ROLLBACK').catch(() => undefined)
       clearSessionCookie(response)
       if (isUniqueViolation(error)) {
-        response.status(409).json({ error: 'An account with this email already exists' })
+        response.status(403).json({ error: 'A valid invitation is required' })
         return
       }
       next(error)
@@ -1295,8 +1313,11 @@ export function createApp() {
     response.status(404).json({ error: 'Not found' })
   })
 
-  app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+  app.use((error: unknown, request: express.Request, response: express.Response, _next: express.NextFunction) => {
     const typedError = error as { type?: unknown }
+    if (request.path.startsWith('/api/auth/') || request.path === '/api/driver-invitations/accept') {
+      noStore(response)
+    }
     if (typedError.type === 'entity.too.large') {
       response.status(413).json({ error: 'Payload too large' })
       return

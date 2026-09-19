@@ -46,6 +46,25 @@ try {
   })
   assert.equal(expired.status, 403)
 
+  const mismatchToken = createOwnerInvitationToken()
+  invitationTokens.push(mismatchToken)
+  await insertInvitation(email, organizationName, mismatchToken)
+  const mismatch = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.21' },
+    body: JSON.stringify({ organizationName, email: `mismatch-${suffix}@example.test`, password, inviteToken: mismatchToken }),
+  })
+  assert.equal(mismatch.status, 403)
+
+  const cancelledToken = createOwnerInvitationToken()
+  invitationTokens.push(cancelledToken)
+  await insertInvitation(email, organizationName, cancelledToken)
+  await getPool().query("UPDATE owner_invitations SET status = 'cancelled' WHERE token_hash = $1", [hashOwnerInvitationToken(cancelledToken)])
+  const cancelled = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.22' },
+    body: JSON.stringify({ organizationName, email, password, inviteToken: cancelledToken }),
+  })
+  assert.equal(cancelled.status, 403)
+
   const inviteToken = createOwnerInvitationToken()
   invitationTokens.push(inviteToken)
   await insertInvitation(email, organizationName, inviteToken)
@@ -76,7 +95,8 @@ try {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ organizationName: 'Otra Flota', email, password, inviteToken: duplicateToken }),
   })
-  assert.equal(duplicateEmail.status, 409)
+  assert.equal(duplicateEmail.status, 403)
+  assert.deepEqual(await duplicateEmail.json(), { error: 'A valid invitation is required' })
 
   const concurrentEmail = `concurrent-${suffix}@example.test`
   const concurrentOrganization = `Concurrent Flota ${suffix}`
