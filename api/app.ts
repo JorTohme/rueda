@@ -251,15 +251,45 @@ function settlementInput(body: unknown) {
   return { driverId, vehicleId, periodStart, periodEnd, fixedAmount, revenuePercent } as const
 }
 
+const AUTH_RATE_LIMIT = 10
+const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000
+
+function noStore(response: express.Response) {
+  response.setHeader('Cache-Control', 'no-store')
+}
+
+function createAuthRateLimiter() {
+  const attempts = new Map<string, { count: number; resetAt: number }>()
+  return (request: express.Request, response: express.Response, next: express.NextFunction) => {
+    const key = request.ip || request.socket.remoteAddress || 'unknown'
+    const now = Date.now()
+    const current = attempts.get(key)
+    if (!current || current.resetAt <= now) {
+      attempts.set(key, { count: 1, resetAt: now + AUTH_RATE_WINDOW_MS })
+      next()
+      return
+    }
+    if (current.count >= AUTH_RATE_LIMIT) {
+      noStore(response)
+      response.setHeader('Retry-After', String(Math.ceil((current.resetAt - now) / 1000)))
+      response.status(429).json({ error: 'Too many authentication attempts' })
+      return
+    }
+    current.count += 1
+    next()
+  }
+}
 export function createApp() {
   const app = express()
-  app.use(express.json())
+  const authRateLimit = createAuthRateLimiter()
+  app.use(express.json({ limit: '100kb' }))
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' })
   })
 
-  app.post('/api/auth/login', async (request, response, next) => {
+  app.post('/api/auth/login', authRateLimit, async (request, response, next) => {
+    noStore(response)
     const credentials = requiredCredentials(request.body)
     if (!credentials) {
       response.status(400).json({ error: 'email and password are required' })
@@ -284,7 +314,8 @@ export function createApp() {
     }
   })
 
-  app.post('/api/auth/register', async (request, response, next) => {
+  app.post('/api/auth/register', authRateLimit, async (request, response, next) => {
+    noStore(response)
     const input = registrationInput(request.body)
     if ('error' in input) {
       response.status(400).json({ error: input.error })
@@ -367,7 +398,8 @@ export function createApp() {
     }
   })
 
-  app.post('/api/driver-invitations/accept', async (request, response, next) => {
+  app.post('/api/driver-invitations/accept', authRateLimit, async (request, response, next) => {
+    noStore(response)
     const token = typeof request.body?.token === 'string' ? request.body.token.trim() : undefined
     const password = typeof request.body?.password === 'string' ? request.body.password : undefined
     if (!token || token.length < 20 || token.length > 128 || !password || password.length < 8 || password.length > 128) {
@@ -422,6 +454,7 @@ export function createApp() {
   })
 
   app.get('/api/auth/me', async (request, response, next) => {
+    noStore(response)
     try {
       const user = await getSessionUser(request, response)
       if (!user) {
@@ -435,6 +468,7 @@ export function createApp() {
   })
 
   app.post('/api/auth/refresh', async (request, response, next) => {
+    noStore(response)
     try {
       const user = await refreshSession(request, response)
       if (!user) {
@@ -449,6 +483,7 @@ export function createApp() {
   })
 
   app.post('/api/auth/logout', async (request, response, next) => {
+    noStore(response)
     try {
       await deleteSession(request)
       clearSessionCookie(response)
@@ -1256,7 +1291,20 @@ export function createApp() {
     }
   })
 
+  app.use('/api', (_request, response) => {
+    response.status(404).json({ error: 'Not found' })
+  })
+
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
+    const typedError = error as { type?: unknown }
+    if (typedError.type === 'entity.too.large') {
+      response.status(413).json({ error: 'Payload too large' })
+      return
+    }
+    if (typedError.type === 'entity.parse.failed') {
+      response.status(400).json({ error: 'Invalid JSON body' })
+      return
+    }
     console.error(error)
     response.status(503).json({ error: 'Database unavailable' })
   })
@@ -1275,6 +1323,9 @@ function requireFleetManager(_request: express.Request, response: express.Respon
 function isUniqueViolation(error: unknown): error is { code: string } {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505'
 }
+
+
+
 
 
 
