@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fleet_saas
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet
+    ports:
+      - "5433:5432"
+    volumes:
+      - fleet-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  fleet-postgres-data:
