@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import express from 'express'
 import { clearSessionCookie, createSession, deleteSession, getMemberships, getSessionUser, hashPassword, hashSessionToken, normalizeEmail, refreshSession, requireAuth, requireTenantMembership, requiredCredentials, verifyPassword } from './auth.js'
 import { getPool } from './db/pool.js'
+import { hashOwnerInvitationToken } from './owner-invitation.js'
 
 export type DashboardSummary = {
   tenantId: string
@@ -75,14 +76,15 @@ function slugify(value: string) {
 }
 
 function registrationInput(body: unknown) {
-  const record = body as { organizationName?: unknown; email?: unknown; password?: unknown } | null
+  const record = body as { organizationName?: unknown; email?: unknown; password?: unknown; inviteToken?: unknown } | null
   const organizationName = requiredText(record?.organizationName)
   const email = typeof record?.email === 'string' ? normalizeEmail(record.email) : undefined
   const password = typeof record?.password === 'string' ? record.password : undefined
+  const inviteToken = typeof record?.inviteToken === 'string' ? record.inviteToken.trim() : undefined
   if (!organizationName || organizationName.length < 2 || organizationName.length > 80) return { error: 'organizationName must be between 2 and 80 characters' } as const
-  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: 'a valid email is required' } as const
+  if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email)) return { error: 'a valid email is required' } as const
   if (!password || password.length < 8 || password.length > 128) return { error: 'password must be between 8 and 128 characters' } as const
-  return { organizationName, email, password } as const
+  return { organizationName, email, password, inviteToken } as const
 }
 
 function vehicleResponse(vehicle: VehicleRow) {
@@ -289,10 +291,29 @@ export function createApp() {
       return
     }
 
+    if (!input.inviteToken || input.inviteToken.length < 20 || input.inviteToken.length > 128) {
+      response.status(403).json({ error: 'A valid invitation is required' })
+      return
+    }
+
     const pool = getPool()
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
+      const invitation = await client.query<{ id: string; organization_name: string }>(
+        `SELECT id::text, organization_name
+         FROM owner_invitations
+         WHERE token_hash = $1 AND email = $2 AND status = 'pending' AND expires_at > now()
+         FOR UPDATE`,
+        [hashOwnerInvitationToken(input.inviteToken), input.email],
+      )
+      const invitationRow = invitation.rows[0]
+      if (!invitationRow || invitationRow.organization_name !== input.organizationName) {
+        await client.query('ROLLBACK')
+        response.status(403).json({ error: 'A valid invitation is required' })
+        return
+      }
+
       const existingUser = await client.query('SELECT 1 FROM users WHERE email = $1', [input.email])
       if (existingUser.rowCount) {
         await client.query('ROLLBACK')
@@ -300,7 +321,7 @@ export function createApp() {
         return
       }
 
-      const baseSlug = slugify(input.organizationName)
+      const baseSlug = slugify(invitationRow.organization_name)
       let tenant: { id: string; slug: string; name: string } | undefined
       for (let attempt = 0; attempt < 5 && !tenant; attempt += 1) {
         const slug = attempt === 0 ? baseSlug : `${baseSlug}-${randomBytes(3).toString('hex')}`
@@ -308,7 +329,7 @@ export function createApp() {
         try {
           const result = await client.query<{ id: string; slug: string; name: string }>(
             'INSERT INTO tenants (slug, name) VALUES ($1, $2) RETURNING id::text, slug, name',
-            [slug, input.organizationName],
+            [slug, invitationRow.organization_name],
           )
           tenant = result.rows[0]
         } catch (error) {
@@ -329,6 +350,7 @@ export function createApp() {
       )
       const user = userResult.rows[0]
       await client.query('INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, $3)', [user.id, tenant.id, 'owner'])
+      await client.query("UPDATE owner_invitations SET status = 'accepted', accepted_at = now() WHERE id = $1 AND status = 'pending'", [invitationRow.id])
       await createSession(user.id, response, client)
       await client.query('COMMIT')
       response.status(201).json({ user, memberships: [{ tenantId: tenant.slug, tenantName: tenant.name, role: 'owner' }] })
@@ -1253,3 +1275,7 @@ function requireFleetManager(_request: express.Request, response: express.Respon
 function isUniqueViolation(error: unknown): error is { code: string } {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505'
 }
+
+
+
+
