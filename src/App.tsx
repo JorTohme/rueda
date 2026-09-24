@@ -129,7 +129,7 @@ function App() {
     setRegisterError('')
     const response = await fetch('/api/auth/register', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ organizationName, email: loginEmail, password: registerPassword }),
+      body: JSON.stringify({ organizationName, email: loginEmail, password: registerPassword, inviteToken }),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as { error?: string }
@@ -193,7 +193,7 @@ function App() {
         <p className="eyebrow">GESTIÓN DE FLOTA</p>
         <h1>{authMode === 'login' ? 'Ingresá a tu cuenta' : authMode === 'register' ? 'Creá tu cuenta' : 'Aceptá tu invitación'}</h1>
         <p className="auth-subtitle">Administrá tus vehículos, conductores y resultados.</p>
-        {authMode === 'register' && <><label htmlFor="organization">Nombre de la flota</label><input id="organization" type="text" autoComplete="organization" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} required /></>}
+        {authMode === 'register' && <><label htmlFor="organization">Nombre de la flota</label><input id="organization" type="text" autoComplete="organization" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} required /><label htmlFor="register-invite-token">Token de invitación</label><input id="register-invite-token" type="text" value={inviteToken} onChange={(event) => setInviteToken(event.target.value)} required /></>}
         {authMode === 'invite' ? <><label htmlFor="invite-token">Token de invitación</label><input id="invite-token" type="text" value={inviteToken} onChange={(event) => setInviteToken(event.target.value)} required /><label htmlFor="invite-password">Nueva contraseña</label><input id="invite-password" type="password" autoComplete="new-password" value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} required /></> : <><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} required /><label htmlFor="password">Contraseña</label><input id="password" type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={authMode === 'login' ? loginPassword : registerPassword} onChange={(event) => authMode === 'login' ? setLoginPassword(event.target.value) : setRegisterPassword(event.target.value)} required /></>}
         {authMode === 'login' && loginError && <p className="auth-error" role="alert">{loginError}</p>}
         {authMode === 'register' && registerError && <p className="auth-error" role="alert">{registerError}</p>}
